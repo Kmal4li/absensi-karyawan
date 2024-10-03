@@ -1,67 +1,176 @@
 <?php
 
-namespace App\Http\Livewire;
+namespace App\Http\Controllers;
 
 use App\Models\Attendance;
+use App\Models\Permission;
 use App\Models\Presence;
-use Livewire\Component;
+use App\Models\User;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Http\Request;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
-class PresenceForm extends Component
+class PresenceController extends Controller
 {
-    public Attendance $attendance;
-    public $holiday;
-    public $data;
-
-    public function mount(Attendance $attendance)
+    public function index()
     {
-        $this->attendance = $attendance;
+        $attendances = Attendance::all()->sortByDesc('data.is_end')->sortByDesc('data.is_start');
+
+        return view('presences.index', [
+            "title" => "Daftar Absensi Dengan Kehadiran",
+            "attendances" => $attendances
+        ]);
     }
-
-    // NOTED: setiap method send presence agar lebih aman seharusnya menggunakan if statement seperti diviewnya
-
-    public function sendEnterPresence()
+        
+    public function notPresent(Attendance $attendance)
     {
-        if ($this->attendance->data->is_start && !$this->attendance->data->is_using_qrcode) { // sama (harus) dengan view
-            Presence::create([
-                "user_id" => auth()->user()->id,
-                "attendance_id" => $this->attendance->id,
-                "presence_date" => now()->toDateString(),
-                "presence_enter_time" => now()->toTimeString(),
-                "presence_out_time" => null
-            ]);
+        $byDate = now()->toDateString();
+        if (request('display-by-date'))
+            $byDate = request('display-by-date');
 
-            // untuk refresh if statement
-            $this->data['is_has_enter_today'] = true;
-            $this->data['is_not_out_yet'] = true;
+        $presences = Presence::query()
+            ->where('attendance_id', $attendance->id)
+            ->where('presence_date', $byDate)
+            ->get(['presence_date', 'user_id']);
 
-            return $this->dispatchBrowserEvent('showToast', ['success' => true, 'message' => "Kehadiran atas nama '" . auth()->user()->name . "' berhasil dikirim."]);
+        // jika semua karyawan tidak hadir
+        if ($presences->isEmpty()) {
+            $notPresentData[] =
+                [
+                    "not_presence_date" => $byDate,
+                    "users" => User::query()
+                        ->with('position')
+                        ->onlyEmployees()
+                        ->get()
+                        ->toArray()
+                ];
+        } else {
+            $notPresentData = $this->getNotPresentEmployees($presences);
         }
+
+
+        return view('presences.not-present', [
+            "title" => "Data Karyawan Tidak Hadir",
+            "attendance" => $attendance,
+            "notPresentData" => $notPresentData
+        ]);
     }
 
-    public function sendOutPresence()
+    public function permissions(Attendance $attendance)
     {
-        // jika absensi sudah jam pulang (is_end) dan tidak menggunakan qrcode (kebalikan)
-        if (!$this->attendance->data->is_end && $this->attendance->data->is_using_qrcode) // sama (harus) dengan view
-            return false;
+        $byDate = now()->toDateString();
+        if (request('display-by-date'))
+            $byDate = request('display-by-date');
+
+        $permissions = Permission::query()
+            ->with(['user', 'user.position'])
+            ->where('attendance_id', $attendance->id)
+            ->where('permission_date', $byDate)
+            ->get();
+
+        return view('presences.permissions', [
+            "title" => "Data Karyawan Izin",
+            "attendance" => $attendance,
+            "permissions" => $permissions,
+            "date" => $byDate
+        ]);
+    }
+
+    public function presentUser(Request $request, Attendance $attendance)
+    {
+        $validated = $request->validate([
+            'user_id' => 'required|string|numeric',
+            "presence_date" => "required|date"
+        ]);
+
+        $user = User::findOrFail($validated['user_id']);
 
         $presence = Presence::query()
-            ->where('user_id', auth()->user()->id)
-            ->where('attendance_id', $this->attendance->id)
-            ->where('presence_date', now()->toDateString())
-            ->where('presence_out_time', null)
+            ->where('attendance_id', $attendance->id)
+            ->where('user_id', $user->id)
+            ->where('presence_date', $validated['presence_date'])
             ->first();
 
-        if (!$presence) // hanya untuk sekedar keamanan (kemungkinan)
-            return $this->dispatchBrowserEvent('showToast', ['success' => false, 'message' => "Terjadi masalah pada saat melakukan absensi."]);
+        // jika data user yang didapatkan dari request user_id, presence_date, sudah absen atau sudah ada ditable presences
+        if ($presence || !$user)
+            return back()->with('failed', 'Request tidak diterima.');
 
-        // untuk refresh if statement
-        $this->data['is_not_out_yet'] = false;
-        $presence->update(['presence_out_time' => now()->toTimeString()]);
-        return $this->dispatchBrowserEvent('showToast', ['success' => true, 'message' => "Atas nama '" . auth()->user()->name . "' berhasil melakukan absensi pulang."]);
+        Presence::create([
+            "attendance_id" => $attendance->id,
+            "user_id" => $user->id,
+            "presence_date" => $validated['presence_date'],
+            "presence_enter_time" => now()->toTimeString(),
+            "presence_out_time" => now()->toTimeString()
+        ]);
+
+        return back()
+            ->with('success', "Berhasil menyimpan data hadir atas nama \"$user->name\".");
     }
 
-    public function render()
+    public function acceptPermission(Request $request, Attendance $attendance)
     {
-        return view('livewire.presence-form');
+        $validated = $request->validate([
+            'user_id' => 'required|string|numeric',
+            "permission_date" => "required|date"
+        ]);
+
+        $user = User::findOrFail($validated['user_id']);
+
+        $permission = Permission::query()
+            ->where('attendance_id', $attendance->id)
+            ->where('user_id', $user->id)
+            ->where('permission_date', $validated['permission_date'])
+            ->first();
+
+        $presence = Presence::query()
+            ->where('attendance_id', $attendance->id)
+            ->where('user_id', $user->id)
+            ->where('presence_date', $validated['permission_date'])
+            ->first();
+
+        // jika data user yang didapatkan dari request user_id, presence_date, sudah absen atau sudah ada ditable presences
+        if ($presence || !$user)
+            return back()->with('failed', 'Request tidak diterima.');
+
+        Presence::create([
+            "attendance_id" => $attendance->id,
+            "user_id" => $user->id,
+            "presence_date" => $validated['permission_date'],
+            "presence_enter_time" => now()->toTimeString(),
+            "presence_out_time" => now()->toTimeString(),
+            'is_permission' => true
+        ]);
+
+        $permission->update([
+            'is_accepted' => 1
+        ]);
+
+        return back()
+            ->with('success', "Berhasil menerima data izin karyawan atas nama \"$user->name\".");
+    }
+
+    private function getNotPresentEmployees($presences)
+    {
+        $uniquePresenceDates = $presences->unique("presence_date")->pluck('presence_date');
+        $uniquePresenceDatesAndCompactTheUserIds = $uniquePresenceDates->map(function ($date) use ($presences) {
+            return [
+                "presence_date" => $date,
+                "user_ids" => $presences->where('presence_date', $date)->pluck('user_id')->toArray()
+            ];
+        });
+        $notPresentData = [];
+        foreach ($uniquePresenceDatesAndCompactTheUserIds as $presence) {
+            $notPresentData[] =
+                [
+                    "not_presence_date" => $presence['presence_date'],
+                    "users" => User::query()
+                        ->with('position')
+                        ->onlyEmployees()
+                        ->whereNotIn('id', $presence['user_ids'])
+                        ->get()
+                        ->toArray()
+                ];
+        }
+        return $notPresentData;
     }
 }

@@ -13,7 +13,7 @@
                 <a class="nav-link {{ request()->routeIs('positions.*') ? 'active' : '' }}"
                     href="{{ route('positions.index') }}">
                     <span data-feather="tag" class="align-text-bottom"></span>
-                    Jabatan / Posisi
+                    Jabatan
                 </a>
             </li>
             <li class="nav-item">
@@ -21,13 +21,6 @@
                     href="{{ route('employees.index') }}">
                     <span data-feather="users" class="align-text-bottom"></span>
                     Karyawaan
-                </a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link {{ request()->routeIs('holidays.*') ? 'active' : '' }}"
-                    href="{{ route('holidays.index') }}">
-                    <span data-feather="calendar" class="align-text-bottom"></span>
-                    Hari Libur
                 </a>
             </li>
             <li class="nav-item">

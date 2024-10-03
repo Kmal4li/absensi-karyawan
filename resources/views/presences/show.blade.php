@@ -17,10 +17,6 @@
                         Izin</a>
                     <a href="{{ route('presences.not-present', $attendance->id) }}" class="badge text-bg-danger">Belum
                         Absen</a>
-                    @if ($attendance->code)
-                    <a href="{{ route('presences.qrcode', ['code' => $attendance->code]) }}"
-                        class="badge text-bg-success">QRCode</a>
-                    @endif
                 </div>
             </div>
 

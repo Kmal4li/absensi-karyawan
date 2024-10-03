@@ -1,14 +1,5 @@
 <div>
 
-    @if ($holiday)
-    <div class="alert alert-success">
-        <small class="fw-bold">Hari ini adalah hari libur.</small>
-    </div>
-    @else
-
-    {{-- jika tidak menggunakan qrcode (button) dan karyawan saat ini tidak menekan tombol izin --}}
-    @if (!$attendance->data->is_using_qrcode && !$data['is_there_permission'])
-
     {{-- jika belum absen dan absen masuk sudah dimulai --}}
     @if ($attendance->data->is_start && !$data['is_has_enter_today'])
     <button class="btn btn-primary px-3 py-2 btn-sm fw-bold d-block w-100 mb-2" wire:click="sendEnterPresence"
